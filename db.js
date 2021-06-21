@@ -421,6 +421,8 @@ exports.init = function (sbot, config) {
     registerIndex,
     setStateFeedsReady,
     loadStateFeeds,
+    stateFeedsReady,
+    getState: () => state,
     getIndexes: () => indexes,
     getIndex: (index) => indexes[index],
     clearIndexes,
