@@ -71,7 +71,11 @@ sbot.db.query(
 
 ### Leveldb plugins
 
-The queries you've seen above use JITDB, but there are some queries that cannot rely on JITDB alone, and we need to depend on Leveldb. This section shows some example leveldb indexes, explains when you need leveldb, and how to make your own leveldb plugin in ssb-db2.
+The queries you've seen above use JITDB, but there are some queries
+that cannot rely on JITDB alone, and we need to depend on
+Leveldb. This section shows some example leveldb indexes, explains
+when you need leveldb, and how to make your own leveldb plugin in
+ssb-db2.
 
 #### Full-mentions
 
@@ -143,9 +147,14 @@ It's wise to use JITDB when:
 1. You want the query output to be the msg itself, not state derived from msgs
 2. You want the query output ordered by timestamp (either descending or ascending)
 
-There are some cases where the assumptions above are not met. For instance, with abouts, we often want to aggregate all `type: "about"` msgs and return all recent values for each field (`name`, `image`, `description`, etc). So assumption number 1 does not apply.
+There are some cases where the assumptions above are not met. For
+instance, with abouts, we often want to aggregate all `type: "about"`
+msgs and return all recent values for each field (`name`, `image`,
+`description`, etc). So assumption number 1 does not apply.
 
-In that case, you can make a leveldb index for ssb-db2, by creating a class that extends the class at `require('ssb-db2/indexes/plugin')`, like this:
+In that case, you can make a leveldb index for ssb-db2, by creating a
+class that extends the class at `require('ssb-db2/indexes/plugin')`,
+like this:
 
 ```js
 const Plugin = require('ssb-db2/indexes/plugin')
@@ -246,11 +255,11 @@ The log is the source of truth in SSB, and now with ssb-db2, we
 introduce a new log alongside the previous one. **One of them, not
 both** has to be considered the source of truth.
 
-While the old log exists, it will be continously migrated to the
-new log, and ssb-db2 forbids you to use its database-writing APIs
-such as `add()`, `publish()`, `del()` and so forth, to prevent the
-two logs from diverging into inconsistent states. The old log will
-remain the source of truth and the new log will just mirror it.
+While the old log exists, it will be continously migrated to the new
+log, and ssb-db2 forbids you to use its database-writing APIs such as
+`add()`, `publish()`, `del()` and so forth, to prevent the two logs
+from diverging into inconsistent states. The old log will remain the
+source of truth and the new log will just mirror it.
 
 If you want to switch the source of truth to be the new log, we must
 delete the old log, after it has been fully migrated. Only then can
