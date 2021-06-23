@@ -243,8 +243,8 @@ irrecoverable state.
 ### Preventing forking feeds
 
 The log is the source of truth in SSB, and now with ssb-db2, we
-introduce a new log alongside the previous one. **One of them, not both**
-has to be considered the source of truth.
+introduce a new log alongside the previous one. **One of them, not
+both** has to be considered the source of truth.
 
 While the old log exists, it will be continously migrated to the
 new log, and ssb-db2 forbids you to use its database-writing APIs
@@ -253,15 +253,16 @@ two logs from diverging into inconsistent states. The old log will
 remain the source of truth and the new log will just mirror it.
 
 If you want to switch the source of truth to be the new log, we must
-delete the old log, after it has been fully migrated. Only then can you use
-database-writing APIs such as `publish()`. To delete the old log, one
-method is to use the
-[config `dangerouslyKillFlumeWhenMigrated`](#configuration). Set it to
-`true` only when you are **absolutely sure** that no other app will attempt
-to read/write to `~/.ssb/flume/log.offset` or wherever the old log lives. It
-will delete the entire flume folder once migration has completed writing the
-messages to the new log. From that point onwards, using APIs such as
-`publish()` will succeed to append messages to the new log.
+delete the old log, after it has been fully migrated. Only then can
+you use database-writing APIs such as `publish()`. To delete the old
+log, one method is to use the [config
+`dangerouslyKillFlumeWhenMigrated`](#configuration). Set it to `true`
+only when you are **absolutely sure** that no other app will attempt
+to read/write to `~/.ssb/flume/log.offset` or wherever the old log
+lives. It will delete the entire flume folder once migration has
+completed writing the messages to the new log. From that point
+onwards, using APIs such as `publish()` will succeed to append
+messages to the new log.
 
 ### Triggering migration
 
@@ -353,6 +354,12 @@ method is safe to use.
 Convenience method for validating and adding a message to the database
 written by the feed running the secret-stack. If message contains
 recps, the message will automatically be encrypted.
+
+### publishAs(feedKey, msg, cb)
+
+Convenience method for validating and adding a message to the database
+written by a different feed than running the secret-stack. If message
+contains recps, the message will automatically be encrypted.
 
 ### add(msg, cb)
 

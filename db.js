@@ -1,6 +1,7 @@
 const push = require('push-stream')
 const ssbKeys = require('ssb-keys')
 const validate = require('ssb-validate')
+const bendy = require('ssb-bendy-butt')
 const Obv = require('obz')
 const promisify = require('promisify-4loc')
 const jitdbOperators = require('jitdb/operators')
@@ -34,6 +35,7 @@ exports.manifest = {
   get: 'async',
   add: 'async',
   publish: 'async',
+  publishAs: 'async',
   del: 'async',
   deleteFeed: 'async',
   addOOO: 'async',
@@ -229,6 +231,41 @@ exports.init = function (sbot, config) {
     )
   }
 
+  function publishAs(feedKeys, msg, cb) {
+    const guard = guardAgainstDuplicateLogs('publishAs()')
+    if (guard) return cb(guard)
+
+    if (feedKeys.id.endsWith('.ed25519')) {
+      // classic
+      onceWhen(
+        stateFeedsReady,
+        (ready) => ready === true,
+        () => {
+          if (msg.recps) msg = ssbKeys.box(msg, msg.recps)
+
+          state.queue = []
+          state = validate.appendNew(state, null, feedKeys, msg, Date.now())
+
+          const kv = state.queue[state.queue.length - 1]
+          log.add(kv.key, kv.value, (err, data) => {
+            post.set(data)
+            cb(err, data)
+          })
+        }
+      )
+    } else if (feedKeys.id.endsWith('.bbfeed-v1')) {
+      // bendy butt
+      // FIXME: validate
+      // FIXME: encryption
+
+      const key = bendy.hash(msg)
+      log.add(key, msg, (err, data) => {
+        post.set(data)
+        cb(err, data)
+      })
+    } else throw ('Unknown feed format', feedKeys)
+  }
+
   function del(msgId, cb) {
     const guard = guardAgainstDuplicateLogs('del()')
     if (guard) return cb(guard)
@@ -408,6 +445,7 @@ exports.init = function (sbot, config) {
     deleteFeed,
     add,
     publish,
+    publishAs,
     addOOO,
     addOOOStrictOrder,
     getStatus: () => status.obv,
