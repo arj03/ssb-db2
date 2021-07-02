@@ -7,7 +7,13 @@ const promisify = require('promisify-4loc')
 const jitdbOperators = require('jitdb/operators')
 const operators = require('./operators')
 const JITDb = require('jitdb')
+const { isFeed, isCloakedMsg: isGroup } = require('ssb-ref')
 const Debug = require('debug')
+
+const { box } = require('envelope-js')
+const SecretKey = require('ssb-tribes/lib/secret-key')
+const { MsgId } = require('ssb-tribes/lib/cipherlinks')
+const KeyStore = require('./keystore')
 
 const { indexesPath } = require('./defaults')
 const { onceWhen } = require('./utils')
@@ -56,7 +62,8 @@ exports.init = function (sbot, config) {
   config.db2 = config.db2 || {}
   const indexes = {}
   const dir = config.path
-  const privateIndex = PrivateIndex(dir, config.keys)
+  const keystore = KeyStore(config)
+  const privateIndex = PrivateIndex(dir, config, keystore)
   const log = Log(dir, config, privateIndex)
   const jitdb = JITDb(log, indexesPath(dir))
   const status = Status(log, jitdb)
@@ -161,7 +168,10 @@ exports.init = function (sbot, config) {
           state = validate.append(state, hmac_key, msg)
           if (state.error) return cb(state.error)
           const kv = state.queue[state.queue.length - 1]
-          log.add(kv.key, kv.value, cb)
+          log.add(kv.key, kv.value, (err, data) => {
+            post.set(data)
+            cb(err, data)
+          })
         } catch (ex) {
           return cb(ex)
         }
@@ -182,7 +192,11 @@ exports.init = function (sbot, config) {
       const kv = oooState.queue[oooState.queue.length - 1]
       get(kv.key, (err, data) => {
         if (data) cb(null, data)
-        else log.add(kv.key, kv.value, cb)
+        else
+          log.add(kv.key, kv.value, (err, data) => {
+            post.set(data)
+            cb(err, data)
+          })
       })
     } catch (ex) {
       return cb(ex)
@@ -203,10 +217,42 @@ exports.init = function (sbot, config) {
       if (strictOrderState.error) return cb(strictOrderState.error)
 
       const kv = strictOrderState.queue[strictOrderState.queue.length - 1]
-      log.add(kv.key, kv.value, cb)
+      log.add(kv.key, kv.value, (err, data) => {
+        post.set(data)
+        cb(err, data)
+      })
     } catch (ex) {
       return cb(ex)
     }
+  }
+
+  function box2(content, previous) {
+    if (content.recps.length > 16)
+      throw new Error(
+        `private-group spec allows maximum 16 slots, but you've tried to use ${content.recps.length}`
+      )
+
+    if (!content.recps.every(isFeed))
+      throw new Error('only feeds are supported as recipients') // for now
+
+    const recipientKeys = content.recps.reduce((acc, recp) => {
+      if (recp === config.keys.id) return [...acc, ...keystore.ownDMKeys()]
+      else return [...acc, keystore.sharedDMKey(recp)]
+    }, [])
+
+    const plaintext = Buffer.from(JSON.stringify(content), 'utf8')
+    const msgKey = new SecretKey().toBuffer()
+    const previousMessageId = new MsgId(previous).toTFK()
+
+    const envelope = box(
+      plaintext,
+      keystore.TFKId,
+      previousMessageId,
+      msgKey,
+      recipientKeys
+    )
+
+    return envelope.toString('base64') + '.box2'
   }
 
   function publish(msg, cb) {
@@ -217,7 +263,12 @@ exports.init = function (sbot, config) {
       stateFeedsReady,
       (ready) => ready === true,
       () => {
-        if (msg.recps) msg = ssbKeys.box(msg, msg.recps)
+        if (msg.recps) {
+          if (msg.recps.every(keystore.supportsBox2)) {
+            const feedState = state.feeds[config.keys.id]
+            msg = box2(msg, feedState ? feedState.id : null)
+          } else msg = ssbKeys.box(msg, msg.recps)
+        }
 
         state.queue = []
         state = validate.appendNew(state, null, config.keys, msg, Date.now())
@@ -450,9 +501,10 @@ exports.init = function (sbot, config) {
     addOOOStrictOrder,
     getStatus: () => status.obv,
     operators,
+    post,
+    addBox2DMKey: keystore.addBox2DMKey,
 
     // needed primarily internally by other plugins in this project:
-    post,
     getLatest: indexes.base.getLatest.bind(indexes.base),
     getAllLatest: indexes.base.getAllLatest.bind(indexes.base),
     getLog: () => log,

@@ -69,6 +69,17 @@ test('Encrypted', (t) => {
     content.recps.map((x) => x.substr(1))
   )
 
+  let i = 0
+
+  var remove = sbot.db.post((msg) => {
+    if (i++ === 0)
+      t.equal(msg.value.sequence, 3, 'we get existing')
+    else {
+      t.equal(msg.value.sequence, 4, 'post is called on publish')
+      remove()
+    }
+  })
+
   db.publish(content, (err) => {
     t.error(err, 'no err')
 
@@ -91,6 +102,17 @@ test('add', (t) => {
     { type: 'post', text: 'testing sbot.add' },
     Date.now()
   )
+
+  let i = 0
+
+  var remove = sbot.db.post((msg) => {
+    if (i++ === 0)
+      t.equal(msg.value.author, keys.id, 'we get existing')
+    else {
+      t.equal(msg.value.author, keys2.id, 'post is called on add')
+      remove()
+    }
+  })
 
   sbot.add(state.queue[0].value, (err, added) => {
     t.error(err)
