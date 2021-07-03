@@ -10,9 +10,9 @@ const JITDb = require('jitdb')
 const { isFeed, isCloakedMsg: isGroup } = require('ssb-ref')
 const Debug = require('debug')
 
+const bfe = require('ssb-bendy-butt/ssb-bfe')
 const { box } = require('envelope-js')
-const SecretKey = require('ssb-tribes/lib/secret-key')
-const { MsgId } = require('ssb-tribes/lib/cipherlinks')
+const SecretKey = require('./tribes/secret-key')
 const KeyStore = require('./keystore')
 
 const { indexesPath } = require('./defaults')
@@ -226,7 +226,7 @@ exports.init = function (sbot, config) {
     }
   }
 
-  function box2(content, previous) {
+  function box2Classic(content, previous) {
     if (content.recps.length > 16)
       throw new Error(
         `private-group spec allows maximum 16 slots, but you've tried to use ${content.recps.length}`
@@ -242,7 +242,7 @@ exports.init = function (sbot, config) {
 
     const plaintext = Buffer.from(JSON.stringify(content), 'utf8')
     const msgKey = new SecretKey().toBuffer()
-    const previousMessageId = new MsgId(previous).toTFK()
+    const previousMessageId = bfe.encode.message(previous)
 
     const envelope = box(
       plaintext,
@@ -255,7 +255,49 @@ exports.init = function (sbot, config) {
     return envelope.toString('base64') + '.box2'
   }
 
-  function publish(msg, cb) {
+  function encryptContent(content) {
+    if (content.recps.every(keystore.supportsBox2)) {
+      const feedState = state.feeds[config.keys.id]
+      return box2Classic(content, feedState ? feedState.id : null)
+    } else return ssbKeys.box(content, content.recps)
+  }
+
+  function encryptBendyButt(
+    encodedAuthor,
+    encodedContent,
+    encodedPrevious,
+    recps
+  ) {
+    if (recps.length > 16)
+      throw new Error(
+        `private-group spec allows maximum 16 slots, but you've tried to use ${content.recps.length}`
+      )
+
+    if (!recps.every(isFeed))
+      throw new Error('only feeds are supported as recipients') // for now
+
+    const recipientKeys = recps.reduce((acc, recp) => {
+      if (recp === config.keys.id) return [...acc, ...keystore.ownDMKeys()]
+      else return [...acc, keystore.sharedDMKey(recp)]
+    }, [])
+
+    const msgKey = new SecretKey().toBuffer()
+
+    // FIXME: consider error if no recipientKeys
+
+    const envelope = box(
+      encodedContent,
+      encodedAuthor,
+      encodedPrevious,
+      msgKey,
+      recipientKeys
+    )
+
+    // maybe just return envelope directly?
+    return envelope.toString('base64') + '.box2'
+  }
+
+  function publish(content, cb) {
     const guard = guardAgainstDuplicateLogs('publish()')
     if (guard) return cb(guard)
 
@@ -263,15 +305,16 @@ exports.init = function (sbot, config) {
       stateFeedsReady,
       (ready) => ready === true,
       () => {
-        if (msg.recps) {
-          if (msg.recps.every(keystore.supportsBox2)) {
-            const feedState = state.feeds[config.keys.id]
-            msg = box2(msg, feedState ? feedState.id : null)
-          } else msg = ssbKeys.box(msg, msg.recps)
-        }
+        if (content.recps) content = encryptContent(content)
 
         state.queue = []
-        state = validate.appendNew(state, null, config.keys, msg, Date.now())
+        state = validate.appendNew(
+          state,
+          null,
+          config.keys,
+          content,
+          Date.now()
+        )
 
         const kv = state.queue[state.queue.length - 1]
         log.add(kv.key, kv.value, (err, data) => {
@@ -282,7 +325,7 @@ exports.init = function (sbot, config) {
     )
   }
 
-  function publishAs(feedKeys, msg, cb) {
+  function publishAs(feedKeys, subfeedKeys, content, cb) {
     const guard = guardAgainstDuplicateLogs('publishAs()')
     if (guard) return cb(guard)
 
@@ -292,10 +335,10 @@ exports.init = function (sbot, config) {
         stateFeedsReady,
         (ready) => ready === true,
         () => {
-          if (msg.recps) msg = ssbKeys.box(msg, msg.recps)
+          if (content.recps) content = encryptContent(content)
 
           state.queue = []
-          state = validate.appendNew(state, null, feedKeys, msg, Date.now())
+          state = validate.appendNew(state, null, feedKeys, content, Date.now())
 
           const kv = state.queue[state.queue.length - 1]
           log.add(kv.key, kv.value, (err, data) => {
@@ -306,10 +349,28 @@ exports.init = function (sbot, config) {
       )
     } else if (feedKeys.id.endsWith('.bbfeed-v1')) {
       // bendy butt
+      const feedState = state.feeds[feedKeys.id]
+      const previous = feedState ? feedState.id : null
+      const sequence = feedState ? feedState.sequence : 1
+      const msg = bendy.create(
+        content,
+        feedKeys,
+        subfeedKeys,
+        previous,
+        sequence,
+        Date.now(),
+        encryptBendyButt
+      )
+
       // FIXME: validate
-      // FIXME: encryption
 
       const key = bendy.hash(msg)
+
+      state.feeds[feedKeys.id] = {
+        id: key,
+        sequence: sequence + 1,
+      }
+
       log.add(key, msg, (err, data) => {
         post.set(data)
         cb(err, data)

@@ -5,6 +5,8 @@ const rimraf = require('rimraf')
 const mkdirp = require('mkdirp')
 const SecretStack = require('secret-stack')
 const caps = require('ssb-caps')
+const bendy = require('ssb-bendy-butt')
+const timestamp = require('monotonic-timestamp')
 
 const dir = '/tmp/ssb-db2-private'
 
@@ -46,6 +48,57 @@ test('publish: auto encrypt message with recps', (t) => {
     t.equal(typeof privateMsg.value.content, 'string')
     db.get(privateMsg.key, (err, msg) => {
       t.equal(msg.content.text, 'super secret')
+      t.end()
+    })
+  })
+})
+
+test('publishAs classic', (t) => {
+  let content = { type: 'post', text: 'super secret', recps: [keys.id] }
+
+  db.publishAs(keys, null, content, (err, privateMsg) => {
+    t.error(err, 'no err')
+
+    t.equal(typeof privateMsg.value.content, 'string')
+    db.get(privateMsg.key, (err, msg) => {
+      t.equal(msg.content.text, 'super secret')
+      t.end()
+    })
+  })
+})
+
+test('publishAs bendy butt', (t) => {
+  const testkey = Buffer.from(
+    '30720d8f9cbf37f6d7062826f6decac93e308060a8aaaa77e6a4747f40ee1a76',
+    'hex'
+  )
+
+  db.addBox2DMKey(testkey)
+
+  // fake some keys
+  const mfKeys = ssbKeys.generate()
+  mfKeys.id = mfKeys.id.replace(".ed25519", ".bbfeed-v1")
+  const mainKeys = ssbKeys.generate()
+
+  const content = {
+    type: "metafeed/add",
+    feedpurpose: "secret purpose",
+    subfeed: mainKeys.id,
+    recps: [keys.id],
+    tangles: {
+      metafeed: {
+        root: null,
+        previous: null
+      }
+    }
+  }
+
+  db.publishAs(mfKeys, mainKeys, content, (err, privateMsg) => {
+    t.error(err, 'no err')
+
+    t.true(privateMsg.value.content.endsWith(".box2"), 'box2 encoded')
+    db.get(privateMsg.key, (err, msg) => {
+      t.equal(msg.content.feedpurpose, 'secret purpose')
       sbot.close(t.end)
     })
   })

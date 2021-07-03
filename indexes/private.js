@@ -9,7 +9,8 @@ const DeferredPromise = require('p-defer')
 const path = require('path')
 const Debug = require('debug')
 
-const { FeedId, MsgId } = require('ssb-tribes/lib/cipherlinks')
+const bfe = require('ssb-bendy-butt/ssb-bfe')
+const bendy = require('ssb-bendy-butt')
 const { unboxKey, unboxBody } = require('envelope-js')
 
 const { indexesPath } = require('../defaults')
@@ -105,7 +106,12 @@ module.exports = function (dir, config, keystore) {
   function reconstructMessage(record, unboxedContent) {
     const msg = bipf.decode(record.value, 0)
     const originalContent = msg.value.content
-    msg.value.content = unboxedContent
+    if (msg.value.author.endsWith('.bbfeed-v1') && Array.isArray(unboxedContent)) {
+      msg.value.content = unboxedContent[0]
+      msg.value.contentSignature = unboxedContent[1]
+    } else
+      msg.value.content = unboxedContent
+
     msg.meta = {
       private: true,
       originalContent,
@@ -123,28 +129,38 @@ module.exports = function (dir, config, keystore) {
   const bPrevious = Buffer.from('previous')
   const bContent = Buffer.from('content')
 
+  // FIXME: use from bfe
+  const CLASSICFEEDTYPE = Buffer.concat([
+    Buffer.from([0]),
+    Buffer.from([0])
+  ])
+
   function decryptBox2Msg(envelope, feed_id, prev_msg_id, read_key) {
     const plaintext = unboxBody(envelope, feed_id, prev_msg_id, read_key)
-    // FIXME: this assumes that what is boxed is json
-    if (plaintext) return JSON.parse(plaintext.toString('utf8'))
+    if (plaintext) {
+      if (feed_id.slice(0, 2).equals(CLASSICFEEDTYPE))
+        return JSON.parse(plaintext.toString('utf8'))
+      else
+        return bendy.decodeBox2(plaintext)
+    }
     else return ''
   }
 
   function decryptBox2(ciphertext, author, previous) {
     const envelope = Buffer.from(ciphertext.replace('.box2', ''), 'base64')
-    const feed_id = new FeedId(author).toTFK()
-    const prev_msg_id = new MsgId(previous).toTFK()
+    const authorBFE = bfe.encode.feed(author)
+    const previousBFE = bfe.encode.message(previous)
 
     const trial_dm_keys = author !== sbotId ?
           [keystore.sharedDMKey(author), ...keystore.ownDMKeys()] :
           keystore.ownDMKeys()
 
-    read_key = unboxKey(envelope, feed_id, prev_msg_id, trial_dm_keys, {
+    read_key = unboxKey(envelope, authorBFE, previousBFE, trial_dm_keys, {
       maxAttempts: 16,
     })
 
     if (read_key)
-      return decryptBox2Msg(envelope, feed_id, prev_msg_id, read_key)
+      return decryptBox2Msg(envelope, authorBFE, previousBFE, read_key)
     else return ''
   }
 
