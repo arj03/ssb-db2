@@ -77,7 +77,7 @@ test('publishAs bendy butt', (t) => {
 
   // fake some keys
   const mfKeys = ssbKeys.generate()
-  mfKeys.id = mfKeys.id.replace(".ed25519", ".bbfeed-v1")
+  mfKeys.public = mfKeys.id = mfKeys.id.replace(".ed25519", ".bbfeed-v1")
   const mainKeys = ssbKeys.generate()
 
   const content = {

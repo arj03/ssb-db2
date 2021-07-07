@@ -9,7 +9,7 @@ const DeferredPromise = require('p-defer')
 const path = require('path')
 const Debug = require('debug')
 
-const bfe = require('ssb-bendy-butt/ssb-bfe')
+const bfe = require('ssb-bfe')
 const bendy = require('ssb-bendy-butt')
 const { unboxKey, unboxBody } = require('envelope-js')
 
@@ -148,8 +148,8 @@ module.exports = function (dir, config, keystore) {
 
   function decryptBox2(ciphertext, author, previous) {
     const envelope = Buffer.from(ciphertext.replace('.box2', ''), 'base64')
-    const authorBFE = bfe.encode.feed(author)
-    const previousBFE = bfe.encode.message(previous)
+    const authorBFE = bfe.encode(author)
+    const previousBFE = bfe.encode(previous)
 
     const trial_dm_keys = author !== sbotId ?
           [keystore.sharedDMKey(author), ...keystore.ownDMKeys()] :

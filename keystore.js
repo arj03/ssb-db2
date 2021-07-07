@@ -1,6 +1,5 @@
-const directMessageKey = require('./tribes/direct-message-key')
-const SecretKey = require('./tribes/secret-key')
-const bfe = require('ssb-bendy-butt/ssb-bfe')
+const { directMessageKey, SecretKey } = require('ssb-box2')
+const bfe = require('ssb-bfe')
 const { keySchemes } = require('private-group-spec')
 
 module.exports = function (config) {
@@ -38,7 +37,7 @@ module.exports = function (config) {
 
   return {
     ownDMKeys,
-    TFKId: bfe.encode.feed(config.keys.id),
+    TFKId: bfe.encode(config.keys.id),
     sharedDMKey,
     supportsBox2,
     addBox2DMKey,

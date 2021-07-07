@@ -10,9 +10,9 @@ const JITDb = require('jitdb')
 const { isFeed, isCloakedMsg: isGroup } = require('ssb-ref')
 const Debug = require('debug')
 
-const bfe = require('ssb-bendy-butt/ssb-bfe')
+const bfe = require('ssb-bfe')
 const { box } = require('envelope-js')
-const SecretKey = require('./tribes/secret-key')
+const { SecretKey } = require('ssb-box2')
 const KeyStore = require('./keystore')
 
 const { indexesPath } = require('./defaults')
@@ -242,7 +242,7 @@ exports.init = function (sbot, config) {
 
     const plaintext = Buffer.from(JSON.stringify(content), 'utf8')
     const msgKey = new SecretKey().toBuffer()
-    const previousMessageId = bfe.encode.message(previous)
+    const previousMessageId = bfe.encode(previous)
 
     const envelope = box(
       plaintext,
