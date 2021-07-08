@@ -9,6 +9,7 @@ exports.manifest = {
 }
 
 exports.init = function (sbot, config) {
+  sbot.add = sbot.db.add
   sbot.get = sbot.db.get
   sbot.publish = sbot.db.publish
   sbot.whoami = () => ({ id: sbot.id })
