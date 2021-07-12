@@ -19,17 +19,17 @@ module.exports = function (dir, config, privateIndex) {
     },
   })
 
-  log.add = function (id, msg, cb) {
-    const data = {
+  log.add = function (id, msgVal, cb) {
+    const kvt = {
       key: id,
-      value: msg,
+      value: msgVal,
       timestamp: Date.now(),
     }
-    const b = Buffer.alloc(bipf.encodingLength(data))
-    bipf.encode(data, b, 0)
+    const b = Buffer.alloc(bipf.encodingLength(kvt))
+    bipf.encode(kvt, b, 0)
     log.append(b, function (err) {
       if (err) cb(err)
-      else cb(null, data)
+      else cb(null, kvt)
     })
   }
 

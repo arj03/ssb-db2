@@ -62,6 +62,15 @@ test('author sequence', (t) => {
   })
 })
 
+test('vector clock', (t) => {
+  sbot.getVectorClock((err, clock) => {
+    t.error(err, 'no err')
+    t.deepEquals(clock, { [keys.id]: 3 })
+
+    t.end()
+  })
+})
+
 test('Encrypted', (t) => {
   let content = { type: 'post', text: 'super secret', recps: [keys.id] }
   content = ssbKeys.box(
@@ -72,8 +81,7 @@ test('Encrypted', (t) => {
   let i = 0
 
   var remove = sbot.db.post((msg) => {
-    if (i++ === 0)
-      t.equal(msg.value.sequence, 3, 'we get existing')
+    if (i++ === 0) t.equal(msg.value.sequence, 3, 'we get existing')
     else {
       t.equal(msg.value.sequence, 4, 'post is called on publish')
       remove()
@@ -106,8 +114,7 @@ test('add', (t) => {
   let i = 0
 
   var remove = sbot.db.post((msg) => {
-    if (i++ === 0)
-      t.equal(msg.value.author, keys.id, 'we get existing')
+    if (i++ === 0) t.equal(msg.value.author, keys.id, 'we get existing')
     else {
       t.equal(msg.value.author, keys2.id, 'post is called on add')
       remove()

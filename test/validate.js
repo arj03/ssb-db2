@@ -46,7 +46,7 @@ test('Multiple', (t) => {
   })
 })
 
-test('Raw feed with unused type + ooo', (t) => {
+test('Raw feed with unused type + ooo in batch', (t) => {
   let state = validate.initial()
   const keys = ssbKeys.generate()
 
@@ -93,34 +93,22 @@ test('Raw feed with unused type + ooo', (t) => {
     Date.now() + 5
   )
 
-  let strictOrderState = validate.initial()
-  db.addOOOStrictOrder(state.queue[2].value, strictOrderState, (err) => {
+  const msgVals = state.queue.slice(2).map((msg) => msg.value)
+  db.addOOOBatch(msgVals, (err) => {
     t.error(err, 'no err')
 
-    db.addOOOStrictOrder(state.queue[3].value, strictOrderState, (err) => {
+    db.addOOO(state.queue[0].value, (err, oooMsg) => {
       t.error(err, 'no err')
+      t.equal(oooMsg.value.content.text, 'test1', 'text correct')
 
-      db.addOOOStrictOrder(state.queue[4].value, strictOrderState, (err) => {
-        t.error(err, 'no err')
-
-        db.addOOOStrictOrder(state.queue[5].value, strictOrderState, (err) => {
-          t.error(err, 'no err')
-
-          db.addOOO(state.queue[0].value, (err, oooMsg) => {
-            t.error(err, 'no err')
-            t.equal(oooMsg.value.content.text, 'test1', 'text correct')
-
-            t.end()
-          })
-        })
-      })
+      t.end()
     })
   })
 })
 
 // we might get some messages from an earlier thread, and then get the
 // latest 25 messages from the user
-test('Add with holes', (t) => {
+test('Add OOO with holes', (t) => {
   let state = validate.initial()
   const keys = ssbKeys.generate()
 
@@ -146,8 +134,7 @@ test('Add with holes', (t) => {
     Date.now() + 2
   ) // start
 
-  let strictOrderState = validate.initial()
-  db.addOOOStrictOrder(state.queue[0].value, strictOrderState, (err) => {
+  db.addOOO(state.queue[0].value, (err) => {
     t.error(err, 'no err')
 
     db.addOOO(state.queue[2].value, (err, msg) => {
@@ -188,74 +175,6 @@ test('Add same message twice', (t) => {
         t.ok(err, 'Should fail to add')
         t.end()
       })
-    })
-  })
-})
-
-test('Strict order basic case', (t) => {
-  let state = validate.initial()
-  const keys = ssbKeys.generate()
-
-  state = validate.appendNew(
-    state,
-    null,
-    keys,
-    { type: 'post', text: 'test1' },
-    Date.now()
-  )
-  state = validate.appendNew(
-    state,
-    null,
-    keys,
-    { type: 'post', text: 'test2' },
-    Date.now() + 1
-  )
-
-  let strictOrderState = validate.initial()
-  db.addOOOStrictOrder(state.queue[0].value, strictOrderState, (err) => {
-    t.error(err, 'no err')
-
-    db.addOOOStrictOrder(state.queue[1].value, strictOrderState, (err) => {
-      t.error(err, 'no err')
-      t.end()
-    })
-  })
-})
-
-test('Strict order fail case', (t) => {
-  let state = validate.initial()
-  const keys = ssbKeys.generate()
-
-  state = validate.appendNew(
-    state,
-    null,
-    keys,
-    { type: 'post', text: 'test1' },
-    Date.now()
-  )
-  state = validate.appendNew(
-    state,
-    null,
-    keys,
-    { type: 'post', text: 'test2' },
-    Date.now() + 1
-  )
-  state = validate.appendNew(
-    state,
-    null,
-    keys,
-    { type: 'post', text: 'test3' },
-    Date.now() + 2
-  )
-
-  let strictOrderState = validate.initial()
-  db.addOOOStrictOrder(state.queue[0].value, strictOrderState, (err) => {
-    t.error(err, 'no err')
-
-    db.addOOOStrictOrder(state.queue[2].value, strictOrderState, (err) => {
-      t.ok(err, 'Should fail to add')
-
-      t.end()
     })
   })
 })

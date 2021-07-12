@@ -3,26 +3,33 @@ const pl = require('pull-level')
 const pull = require('pull-stream')
 const Plugin = require('./plugin')
 
-const bKey = Buffer.from('key')
 const bValue = Buffer.from('value')
 const bAuthor = Buffer.from('author')
 const bSequence = Buffer.from('sequence')
-const bTimestamp = Buffer.from('timestamp')
 
-// author => latest { msg key, sequence timestamp } (validate state & EBT)
+// authorId => latestMsg { offset, sequence }
+//
+// Necessary for feed validation and for EBT
 module.exports = function makeBaseIndex(privateIndex) {
   return class BaseIndex extends Plugin {
     constructor(log, dir) {
-      super(log, dir, 'base', 1, undefined, 'json')
+      super(log, dir, 'base', 2, undefined, 'json')
       this.privateIndex = privateIndex
-      this.authorLatest = {}
+      this.authorLatest = new Map()
     }
 
     onLoaded(cb) {
-      this.getAllLatest((err, latest) => {
-        this.authorLatest = latest
-        cb()
-      })
+      pull(
+        this.getAllLatest(),
+        pull.drain(
+          ({ key, value }) => {
+            this.authorLatest.set(key, value)
+          },
+          (err) => {
+            cb()
+          }
+        )
+      )
     }
 
     processRecord(record, seq) {
@@ -31,17 +38,16 @@ module.exports = function makeBaseIndex(privateIndex) {
       if (pValue < 0) return
       const author = bipf.decode(buf, bipf.seekKey(buf, pValue, bAuthor))
       const sequence = bipf.decode(buf, bipf.seekKey(buf, pValue, bSequence))
-      const timestamp = bipf.decode(buf, bipf.seekKey(buf, pValue, bTimestamp))
-      let latestSequence = 0
-      if (this.authorLatest[author])
-        latestSequence = this.authorLatest[author].sequence
+      const latestSequence = this.authorLatest.has(author)
+        ? this.authorLatest.get(author).sequence
+        : 0
       if (sequence > latestSequence) {
-        const key = bipf.decode(buf, bipf.seekKey(buf, 0, bKey))
-        this.authorLatest[author] = { id: key, sequence, timestamp }
+        const latest = { offset: record.offset, sequence }
+        this.authorLatest.set(author, latest)
         this.batch.push({
           type: 'put',
           key: author,
-          value: this.authorLatest[author],
+          value: latest,
         })
       }
     }
@@ -50,25 +56,17 @@ module.exports = function makeBaseIndex(privateIndex) {
       this.privateIndex.saveIndexes(cb)
     }
 
-    getAllLatest(cb) {
+    // pull-stream where each item is { key, value }
+    // where key is the authorId and value is { offset, sequence }
+    getAllLatest() {
       const META = '\x00'
-      pull(
-        pl.read(this.level, {
-          gt: META,
-          valueEncoding: this.valueEncoding,
-        }),
-        pull.collect((err, data) => {
-          if (err) return cb(err)
-          const result = {}
-          data.forEach((d) => {
-            result[d.key] = d.value
-          })
-          cb(null, result)
-        })
-      )
+      return pl.read(this.level, {
+        gt: META,
+        valueEncoding: this.valueEncoding,
+      })
     }
 
-    // returns { id (msg key), sequence, timestamp }
+    // returns { offset, sequence }
     getLatest(feedId, cb) {
       this.level.get(feedId, { valueEncoding: this.valueEncoding }, cb)
     }

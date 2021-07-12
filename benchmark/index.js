@@ -94,6 +94,9 @@ test('setup', (t) => {
 })
 
 test('add a bunch of messages', async (t) => {
+  rimraf.sync(db2Path)
+  t.pass('delete db2 folder to start clean')
+
   const sbot = SecretStack({ appKey: caps.shs })
     .use(require('../'))
     .call(null, { keys, path: dirAdd })
@@ -109,25 +112,25 @@ test('add a bunch of messages', async (t) => {
     )
   }
 
-  const messages = state.queue.map((x) => x.value)
+  const msgVals = state.queue.map((x) => x.value)
 
   const ended = DeferredPromise()
   const start = Date.now()
 
-  pull(
-    pull.values(messages),
-    asyncFilter(sbot.db.add),
-    pull.collect((err) => {
-      const duration = Date.now() - start
+  const done = multicb({ pluck: 1 })
+  for (const msgVal of msgVals) {
+    sbot.db.add(msgVal, done())
+  }
+  done((err) => {
+    const duration = Date.now() - start
 
-      if (err) t.fail(err)
+    if (err) t.fail(err)
 
-      t.pass(`duration: ${duration}ms`)
-      fs.appendFileSync(reportPath, `| add 1000 elements | ${duration}ms |\n`)
+    t.pass(`duration: ${duration}ms`)
+    fs.appendFileSync(reportPath, `| add 1000 elements | ${duration}ms |\n`)
 
-      sbot.close(() => ended.resolve())
-    })
-  )
+    sbot.close(() => ended.resolve())
+  })
 
   await ended.promise
 })

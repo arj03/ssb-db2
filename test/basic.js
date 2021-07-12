@@ -165,7 +165,7 @@ test('delete all', (t) => {
   })
 })
 
-test('add 3 messages', (t) => {
+test('add three messages', (t) => {
   const rando = ssbKeys.generate()
   const post1 = { type: 'post', text: 'a' }
   const post2 = { type: 'post', text: 'b' }
@@ -177,11 +177,15 @@ test('add 3 messages', (t) => {
   s = validate.appendNew(s, null, rando, post2, Date.now() - 2)
   s = validate.appendNew(s, null, rando, post3, Date.now() - 1)
 
+  const pickValue = (kvt) => kvt.value
+
   pull(
     pull.values(s.queue),
-    pull.asyncMap((kvt, cb) => db.add(kvt.value, cb)),
-    pull.collect((err) => {
+    pull.map(pickValue),
+    pull.asyncMap((msgVal, cb) => db.add(msgVal, cb)),
+    pull.collect((err, kvts) => {
       t.error(err)
+      t.deepEquals(kvts.map(pickValue), s.queue.map(pickValue))
       db.onDrain(() => {
         pull(
           db.query(where(author(rando.id)), toPullStream()),
@@ -196,6 +200,29 @@ test('add 3 messages', (t) => {
       })
     })
   )
+})
+
+test('add three messages in batch', (t) => {
+  const rando = ssbKeys.generate()
+  const post4 = { type: 'post', text: 'd' }
+  const post5 = { type: 'post', text: 'e' }
+  const post6 = { type: 'post', text: 'f' }
+
+  let s = validate.initial()
+
+  s = validate.appendNew(s, null, rando, post4, Date.now() - 3)
+  s = validate.appendNew(s, null, rando, post5, Date.now() - 2)
+  s = validate.appendNew(s, null, rando, post6, Date.now() - 1)
+
+  const pickValue = (kvt) => kvt.value
+
+  const msgVals = s.queue.map(pickValue)
+  db.addBatch(msgVals, (err, kvts) => {
+    t.error(err, 'no err')
+    t.equals(kvts.length, 3)
+    t.deepEquals(kvts.map(pickValue), msgVals)
+    t.end()
+  })
 })
 
 test('validate needs to load', (t) => {

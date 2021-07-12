@@ -1,15 +1,24 @@
 const push = require('push-stream')
 const ssbKeys = require('ssb-keys')
-const validate = require('ssb-validate')
+const validate = require('ssb-validate') // TODO: remove this eventually
+const validate2 =
+  typeof localStorage === 'undefined' || localStorage === null
+    ? require('ssb-validate2-rsjs')
+    : require('ssb-validate2')
+const bipf = require('bipf')
+const pull = require('pull-stream')
+const paramap = require('pull-paramap')
 const Obv = require('obz')
 const promisify = require('promisify-4loc')
 const jitdbOperators = require('jitdb/operators')
 const operators = require('./operators')
 const JITDb = require('jitdb')
 const Debug = require('debug')
+const multicb = require('multicb')
 
 const { indexesPath } = require('./defaults')
 const { onceWhen } = require('./utils')
+const DebouncingBatchAdd = require('./debounce-batch')
 const Log = require('./log')
 const Status = require('./status')
 const makeBaseIndex = require('./indexes/base')
@@ -37,7 +46,8 @@ exports.manifest = {
   del: 'async',
   deleteFeed: 'async',
   addOOO: 'async',
-  addOOOStrictOrder: 'async',
+  addBatch: 'async',
+  addOOOBatch: 'async',
   getStatus: 'sync',
 
   // `query` should be `sync`, but secret-stack is automagically converting it
@@ -60,9 +70,9 @@ exports.init = function (sbot, config) {
   const status = Status(log, jitdb)
   const debug = Debug('ssb:db2')
   const post = Obv()
-  const hmac_key = null
+  const hmacKey = null
   const stateFeedsReady = Obv().set(false)
-  let state = validate.initial()
+  const state = {}
 
   sbot.close.hook(function (fn, args) {
     close(() => {
@@ -81,23 +91,32 @@ exports.init = function (sbot, config) {
 
   function loadStateFeeds(cb) {
     // restore current state
-    onDrain('base', () => {
-      indexes.base.getAllLatest((err, last) => {
-        // copy to so we avoid weirdness, because this object
-        // tracks the state coming in to the database.
-        for (const k in last) {
-          state.feeds[k] = {
-            id: last[k].id,
-            timestamp: last[k].timestamp,
-            sequence: last[k].sequence,
-            queue: [],
-          }
-        }
-        debug('getAllLatest is done setting up initial validate state')
-        if (!stateFeedsReady.value) stateFeedsReady.set(true)
-        if (cb) cb()
+    validate2.ready(() => {
+      onDrain('base', () => {
+        pull(
+          indexes.base.getAllLatest(),
+          paramap((latest, cb) => {
+            getMsgByOffset(latest.value.offset, (err, kvt) => {
+              if (err) cb(err)
+              else cb(null, kvt)
+            })
+          }, 8),
+          pull.collect((err, kvts) => {
+            if (err) return console.error('loadStateFeeds failed: ' + err)
+            for (const kvt of kvts) {
+              updateState(kvt)
+            }
+            debug('getAllLatest is done setting up initial validate state')
+            if (!stateFeedsReady.value) stateFeedsReady.set(true)
+            if (cb) cb()
+          })
+        )
       })
     })
+  }
+
+  function updateState(kvt) {
+    state[kvt.value.author] = kvt
   }
 
   // Crunch stats numbers to produce one number for the "indexing" progress
@@ -147,7 +166,69 @@ exports.init = function (sbot, config) {
     getHelper(id, false, cb)
   }
 
-  function add(msg, cb) {
+  function getMsgByOffset(offset, cb) {
+    log.get(offset, (err, buf) => {
+      if (err) return cb(err)
+      cb(null, bipf.decode(buf, 0))
+    })
+  }
+
+  function addOOOBatch(msgVals, cb) {
+    const guard = guardAgainstDuplicateLogs('addOOOBatch()')
+    if (guard) return cb(guard)
+
+    onceWhen(
+      stateFeedsReady,
+      (ready) => ready === true,
+      () => {
+        validate2.validateOOOBatch(hmacKey, msgVals, (err, keys) => {
+          if (err) return cb(err)
+
+          const done = multicb({ pluck: 1 })
+          for (var i = 0; i < msgVals.length; ++i)
+            log.add(keys[i], msgVals[i], done())
+
+          done(cb)
+        })
+      }
+    )
+  }
+
+  function addBatch(msgVals, cb) {
+    const guard = guardAgainstDuplicateLogs('addBatch()')
+    if (guard) return cb(guard)
+
+    onceWhen(
+      stateFeedsReady,
+      (ready) => ready === true,
+      () => {
+        const latestMsgVal =
+          msgVals.length > 0 && state[msgVals[0].author]
+            ? state[msgVals[0].author].value
+            : null
+        validate2.validateBatch(hmacKey, msgVals, latestMsgVal, (err, keys) => {
+          if (err) return cb(err)
+
+          const done = multicb({ pluck: 1 })
+          for (var i = 0; i < msgVals.length; ++i) {
+            if (i === msgVals.length - 1) {
+              // last KVT, let's update the latest state
+              log.add(keys[i], msgVals[i], (err, kvt) => {
+                if (!err && kvt) updateState(kvt)
+                done()(err, kvt)
+              })
+            } else {
+              log.add(keys[i], msgVals[i], done())
+            }
+          }
+
+          done(cb)
+        })
+      }
+    )
+  }
+
+  function addImmediately(msgVal, cb) {
     const guard = guardAgainstDuplicateLogs('add()')
     if (guard) return cb(guard)
 
@@ -155,69 +236,44 @@ exports.init = function (sbot, config) {
       stateFeedsReady,
       (ready) => ready === true,
       () => {
-        try {
-          state = validate.append(state, hmac_key, msg)
-          if (state.error) return cb(state.error)
-          const kv = state.queue[state.queue.length - 1]
-          log.add(kv.key, kv.value, (err, data) => {
+        const latestMsgVal = state[msgVal.author]
+          ? state[msgVal.author].value
+          : null
+        validate2.validateSingle(hmacKey, msgVal, latestMsgVal, (err, key) => {
+          if (err) return cb(err)
+          updateState({ key, value: msgVal })
+          log.add(key, msgVal, (err, data) => {
+            if (err) return cb(err)
             post.set(data)
-            cb(err, data)
+            cb(null, data)
           })
-        } catch (ex) {
-          return cb(ex)
-        }
+        })
       }
     )
   }
 
-  function addOOO(msg, cb) {
+  const debouncePeriod = config.db2.addDebounce || 400
+  const debouncer = new DebouncingBatchAdd(addBatch, debouncePeriod)
+
+  function addOOO(msgVal, cb) {
     const guard = guardAgainstDuplicateLogs('addOOO()')
     if (guard) return cb(guard)
 
-    try {
-      let oooState = validate.initial()
-      validate.appendOOO(oooState, hmac_key, msg)
-
-      if (oooState.error) return cb(oooState.error)
-
-      const kv = oooState.queue[oooState.queue.length - 1]
-      get(kv.key, (err, data) => {
-        if (data) cb(null, data)
-        else
-          log.add(kv.key, kv.value, (err, data) => {
-            post.set(data)
-            cb(err, data)
-          })
+    validate2.validateOOOBatch(hmacKey, [msgVal], (err, keys) => {
+      if (err) return cb(err)
+      const key = keys[0]
+      get(key, (err, data) => {
+        if (data) return cb(null, data)
+        log.add(key, msgVal, (err, data) => {
+          if (err) return cb(err)
+          post.set(data)
+          cb(null, data)
+        })
       })
-    } catch (ex) {
-      return cb(ex)
-    }
+    })
   }
 
-  function addOOOStrictOrder(msg, strictOrderState, cb) {
-    const guard = guardAgainstDuplicateLogs('addOOOStrictOrder()')
-    if (guard) return cb(guard)
-
-    const knownAuthor = msg.author in strictOrderState.feeds
-
-    try {
-      if (!knownAuthor)
-        strictOrderState = validate.appendOOO(strictOrderState, hmac_key, msg)
-      else strictOrderState = validate.append(strictOrderState, hmac_key, msg)
-
-      if (strictOrderState.error) return cb(strictOrderState.error)
-
-      const kv = strictOrderState.queue[strictOrderState.queue.length - 1]
-      log.add(kv.key, kv.value, (err, data) => {
-        post.set(data)
-        cb(err, data)
-      })
-    } catch (ex) {
-      return cb(ex)
-    }
-  }
-
-  function publish(msg, cb) {
+  function publish(content, cb) {
     const guard = guardAgainstDuplicateLogs('publish()')
     if (guard) return cb(guard)
 
@@ -225,13 +281,18 @@ exports.init = function (sbot, config) {
       stateFeedsReady,
       (ready) => ready === true,
       () => {
-        if (msg.recps) msg = ssbKeys.box(msg, msg.recps)
-
-        state.queue = []
-        state = validate.appendNew(state, null, config.keys, msg, Date.now())
-
-        const kv = state.queue[state.queue.length - 1]
-        log.add(kv.key, kv.value, (err, data) => {
+        if (content.recps) content = ssbKeys.box(content, content.recps)
+        const latestKVT = state[config.keys.id]
+        const msgVal = validate.create(
+          latestKVT ? { queue: [latestKVT] } : null,
+          config.keys,
+          null,
+          content,
+          Date.now()
+        )
+        const kvt = validate.toKeyValueTimestamp(msgVal)
+        updateState(kvt)
+        log.add(kvt.key, kvt.value, (err, data) => {
           post.set(data)
           cb(err, data)
         })
@@ -272,7 +333,7 @@ exports.init = function (sbot, config) {
         push.collect((err) => {
           if (err) cb(err)
           else {
-            delete state.feeds[feedId]
+            delete state[feedId]
             indexes.base.removeFeedFromLatest(feedId, cb)
           }
         })
@@ -410,21 +471,23 @@ exports.init = function (sbot, config) {
   }
 
   return (self = {
-    // API:
+    // Public API:
     get,
     getMsg,
     query,
     del,
     deleteFeed,
-    add,
+    add: debouncer.add,
     publish,
     addOOO,
-    addOOOStrictOrder,
+    addOOOBatch,
     getStatus: () => status.obv,
     operators,
     post,
 
     // needed primarily internally by other plugins in this project:
+    addBatch,
+    addImmediately,
     getLatest: indexes.base.getLatest.bind(indexes.base),
     getAllLatest: indexes.base.getAllLatest.bind(indexes.base),
     getLog: () => log,
