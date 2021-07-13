@@ -1,12 +1,19 @@
 const push = require('push-stream')
 const ssbKeys = require('ssb-keys')
 const validate = require('ssb-validate')
+const bendy = require('ssb-bendy-butt')
 const Obv = require('obz')
 const promisify = require('promisify-4loc')
 const jitdbOperators = require('jitdb/operators')
 const operators = require('./operators')
 const JITDb = require('jitdb')
+const { isFeed, isCloakedMsg: isGroup } = require('ssb-ref')
 const Debug = require('debug')
+
+const bfe = require('ssb-bfe')
+const { box } = require('envelope-js')
+const { SecretKey } = require('ssb-box2')
+const KeyStore = require('./keystore')
 
 const { indexesPath } = require('./defaults')
 const { onceWhen } = require('./utils')
@@ -34,6 +41,7 @@ exports.manifest = {
   get: 'async',
   add: 'async',
   publish: 'async',
+  publishAs: 'async',
   del: 'async',
   deleteFeed: 'async',
   addOOO: 'async',
@@ -54,7 +62,8 @@ exports.init = function (sbot, config) {
   config.db2 = config.db2 || {}
   const indexes = {}
   const dir = config.path
-  const privateIndex = PrivateIndex(dir, config.keys)
+  const keystore = KeyStore(config)
+  const privateIndex = PrivateIndex(dir, config, keystore)
   const log = Log(dir, config, privateIndex)
   const jitdb = JITDb(log, indexesPath(dir))
   const status = Status(log, jitdb)
@@ -217,7 +226,78 @@ exports.init = function (sbot, config) {
     }
   }
 
-  function publish(msg, cb) {
+  function box2Classic(content, previous) {
+    if (content.recps.length > 16)
+      throw new Error(
+        `private-group spec allows maximum 16 slots, but you've tried to use ${content.recps.length}`
+      )
+
+    if (!content.recps.every(isFeed))
+      throw new Error('only feeds are supported as recipients') // for now
+
+    const recipientKeys = content.recps.reduce((acc, recp) => {
+      if (recp === config.keys.id) return [...acc, ...keystore.ownDMKeys()]
+      else return [...acc, keystore.sharedDMKey(recp)]
+    }, [])
+
+    const plaintext = Buffer.from(JSON.stringify(content), 'utf8')
+    const msgKey = new SecretKey().toBuffer()
+    const previousMessageId = bfe.encodeClassic(previous)
+
+    const envelope = box(
+      plaintext,
+      keystore.TFKId,
+      previousMessageId,
+      msgKey,
+      recipientKeys
+    )
+
+    return envelope.toString('base64') + '.box2'
+  }
+
+  function encryptContent(content) {
+    if (content.recps.every(keystore.supportsBox2)) {
+      const feedState = state.feeds[config.keys.id]
+      return box2Classic(content, feedState ? feedState.id : null)
+    } else return ssbKeys.box(content, content.recps)
+  }
+
+  function encryptBendyButt(
+    encodedAuthor,
+    encodedContent,
+    encodedPrevious,
+    recps
+  ) {
+    if (recps.length > 16)
+      throw new Error(
+        `private-group spec allows maximum 16 slots, but you've tried to use ${content.recps.length}`
+      )
+
+    if (!recps.every(isFeed))
+      throw new Error('only feeds are supported as recipients') // for now
+
+    const recipientKeys = recps.reduce((acc, recp) => {
+      if (recp === config.keys.id) return [...acc, ...keystore.ownDMKeys()]
+      else return [...acc, keystore.sharedDMKey(recp)]
+    }, [])
+
+    const msgKey = new SecretKey().toBuffer()
+
+    // FIXME: consider error if no recipientKeys
+
+    const envelope = box(
+      encodedContent,
+      encodedAuthor,
+      encodedPrevious,
+      msgKey,
+      recipientKeys
+    )
+
+    // maybe just return envelope directly?
+    return envelope.toString('base64') + '.box2'
+  }
+
+  function publish(content, cb) {
     const guard = guardAgainstDuplicateLogs('publish()')
     if (guard) return cb(guard)
 
@@ -225,10 +305,16 @@ exports.init = function (sbot, config) {
       stateFeedsReady,
       (ready) => ready === true,
       () => {
-        if (msg.recps) msg = ssbKeys.box(msg, msg.recps)
+        if (content.recps) content = encryptContent(content)
 
         state.queue = []
-        state = validate.appendNew(state, null, config.keys, msg, Date.now())
+        state = validate.appendNew(
+          state,
+          null,
+          config.keys,
+          content,
+          Date.now()
+        )
 
         const kv = state.queue[state.queue.length - 1]
         log.add(kv.key, kv.value, (err, data) => {
@@ -237,6 +323,59 @@ exports.init = function (sbot, config) {
         })
       }
     )
+  }
+
+  function publishAs(feedKeys, subfeedKeys, content, cb) {
+    const guard = guardAgainstDuplicateLogs('publishAs()')
+    if (guard) return cb(guard)
+
+    if (feedKeys.id.endsWith('.ed25519')) {
+      // classic
+      onceWhen(
+        stateFeedsReady,
+        (ready) => ready === true,
+        () => {
+          if (content.recps) content = encryptContent(content)
+
+          state.queue = []
+          state = validate.appendNew(state, null, feedKeys, content, Date.now())
+
+          const kv = state.queue[state.queue.length - 1]
+          log.add(kv.key, kv.value, (err, data) => {
+            post.set(data)
+            cb(err, data)
+          })
+        }
+      )
+    } else if (feedKeys.id.endsWith('.bbfeed-v1')) {
+      // bendy butt
+      const feedState = state.feeds[feedKeys.id]
+      const previous = feedState ? feedState.id : null
+      const sequence = feedState ? feedState.sequence : 1
+      const msg = bendy.create(
+        content,
+        feedKeys,
+        subfeedKeys,
+        previous,
+        sequence,
+        Date.now(),
+        encryptBendyButt
+      )
+
+      // FIXME: validate
+
+      const key = bendy.hash(msg)
+
+      state.feeds[feedKeys.id] = {
+        id: key,
+        sequence: sequence + 1,
+      }
+
+      log.add(key, msg, (err, data) => {
+        post.set(data)
+        cb(err, data)
+      })
+    } else throw ('Unknown feed format', feedKeys)
   }
 
   function del(msgId, cb) {
@@ -418,11 +557,13 @@ exports.init = function (sbot, config) {
     deleteFeed,
     add,
     publish,
+    publishAs,
     addOOO,
     addOOOStrictOrder,
     getStatus: () => status.obv,
     operators,
     post,
+    addBox2DMKey: keystore.addBox2DMKey,
 
     // needed primarily internally by other plugins in this project:
     getLatest: indexes.base.getLatest.bind(indexes.base),

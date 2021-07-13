@@ -33,12 +33,14 @@ const {
 
 const dir = '/tmp/ssb-db2-benchmark'
 const dirAdd = '/tmp/ssb-db2-benchmark-add'
+const dirPrivate = '/tmp/ssb-db2-benchmark-private'
 const oldLogPath = path.join(dir, 'flume', 'log.offset')
 const db2Path = path.join(dir, 'db2')
 const indexesPath = path.join(dir, 'db2', 'indexes')
 const reportPath = path.join(dir, 'benchmark.md')
 
 rimraf.sync(dirAdd)
+rimraf.sync(dirPrivate)
 
 const skipCreate = process.argv[2] === 'noCreate'
 
@@ -87,9 +89,10 @@ function reportMem() {
   return `${rss} MB = ${heap} MB + etc`
 }
 
-let keys
+let keys, keys2
 test('setup', (t) => {
   keys = ssbKeys.loadOrCreateSync(path.join(dir, 'secret'))
+  keys2 = ssbKeys.loadOrCreateSync(path.join(dirPrivate, 'secret'))
   t.end()
 })
 
@@ -126,6 +129,146 @@ test('add a bunch of messages', async (t) => {
       fs.appendFileSync(reportPath, `| add 1000 elements | ${duration}ms |\n`)
 
       sbot.close(() => ended.resolve())
+    })
+  )
+
+  await ended.promise
+})
+
+const randos = [
+  ssbKeys.generate().id,
+  ssbKeys.generate().id,
+  ssbKeys.generate().id,
+  ssbKeys.generate().id,
+  ssbKeys.generate().id
+]
+
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+test('private', async (t) => {
+  const sbot = SecretStack({ appKey: caps.shs })
+    .use(require('../'))
+    .call(null, { keys, path: dirPrivate })
+
+  const recps = [...randos, keys.id]
+
+  let contents = []
+  for (var i = 0; i < 1000; ++i)
+    contents.push({ type: 'tick', count: i, recps: shuffle(recps) })
+
+  const ended = DeferredPromise()
+  const start = Date.now()
+
+  pull(
+    pull.values(contents),
+    pull.asyncMap(sbot.db.publish),
+    pull.collect((err, msgs) => {
+      const duration = Date.now() - start
+
+      if (err) t.fail(err)
+
+      t.pass(`box duration: ${duration}ms`)
+      fs.appendFileSync(reportPath, `| add 1000 private box1 elements | ${duration}ms |\n`)
+
+      sbot.db.onDrain('base', () => {
+        let startQuery = Date.now()
+
+        sbot.db.query(
+          where(author(sbot.id)),
+          toCallback((err, results) => {
+            const durationQuery = Date.now() - startQuery
+            t.pass(`unbox first run duration: ${durationQuery}ms`)
+            fs.appendFileSync(reportPath, `| unbox 1000 private box1 elements first run | ${durationQuery}ms |\n`)
+
+            startQuery = Date.now()
+
+            sbot.db.query(
+              where(author(sbot.id)),
+              toCallback((err, results) => {
+                const durationQuery2 = Date.now() - startQuery
+                t.pass(`unbox second run duration: ${durationQuery2}ms`)
+                fs.appendFileSync(reportPath, `| unbox 1000 private box1 elements second run | ${durationQuery2}ms |\n`)
+
+                sbot.close(() => ended.resolve())
+              })
+            )
+          })
+        )
+      })
+    })
+  )
+
+  await ended.promise
+})
+
+test('private box2', async (t) => {
+  const sbot = SecretStack({ appKey: caps.shs })
+    .use(require('../'))
+    .call(null, {
+      keys: keys2,
+      path: dirPrivate,
+      db2: {
+        alwaysbox2: true
+      }
+    })
+
+  const recps = [...randos, keys2.id]
+
+  const testkey = Buffer.from(
+    '30720d8f9cbf37f6d7062826f6decac93e308060a8aaaa77e6a4747f40ee1a76',
+    'hex'
+  )
+  sbot.db.addBox2DMKey(testkey)
+
+  let contents = []
+  for (var i = 0; i < 1000; ++i)
+    contents.push({ type: 'tick', count: i, recps: shuffle(recps) })
+
+  const ended = DeferredPromise()
+  const start = Date.now()
+
+  pull(
+    pull.values(contents),
+    pull.asyncMap(sbot.db.publish),
+    pull.collect((err, msgs) => {
+      const duration = Date.now() - start
+
+      if (err) t.fail(err)
+
+      t.pass(`box duration: ${duration}ms`)
+      fs.appendFileSync(reportPath, `| add 1000 private box2 elements | ${duration}ms |\n`)
+
+      sbot.db.onDrain('base', () => {
+        let startQuery = Date.now()
+
+        sbot.db.query(
+          where(author(sbot.id)),
+          toCallback((err, results) => {
+            const durationQuery = Date.now() - startQuery
+            t.pass(`unbox duration first run: ${durationQuery}ms`)
+            fs.appendFileSync(reportPath, `| unbox 1000 private box2 elements first run | ${durationQuery}ms |\n`)
+
+            startQuery = Date.now()
+
+            sbot.db.query(
+              where(author(sbot.id)),
+              toCallback((err, results) => {
+                const durationQuery2 = Date.now() - startQuery
+                t.pass(`unbox duration second run: ${durationQuery2}ms`)
+                fs.appendFileSync(reportPath, `| unbox 1000 private box2 elements first run | ${durationQuery2}ms |\n`)
+
+                sbot.close(() => ended.resolve())
+              })
+            )
+          })
+        )
+      })
     })
   )
 

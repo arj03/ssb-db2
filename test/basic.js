@@ -7,6 +7,7 @@ const validate = require('ssb-validate')
 const pull = require('pull-stream')
 const SecretStack = require('secret-stack')
 const caps = require('ssb-caps')
+const bendy = require('ssb-bendy-butt')
 
 const { where, author, toPullStream } = require('../operators')
 
@@ -235,11 +236,54 @@ test('validate needs to load', (t) => {
             db.publish(post2, (err, msg2) => {
               t.error(err, 'no err')
               t.equal(msg.key, msg2.value.previous)
-              sbot.close(t.end)
+              t.end()
             })
           })
         })
       })
+    })
+  })
+})
+
+test('publishAs classic', (t) => {
+  const keys = ssbKeys.generate()
+
+  const content = { type: "post", text: "hello world!" }
+
+  db.publishAs(keys, null, content, (err, msg) => {
+    t.error(err, 'no err')
+
+    db.get(msg.key, (err, msg) => {
+      t.equal(msg.content.type, 'post')
+      t.end()
+    })
+  })
+})
+
+test('publishAs bendy butt', (t) => {
+  // fake some keys
+  const mfKeys = ssbKeys.generate()
+  mfKeys.id = mfKeys.id.replace(".ed25519", ".bbfeed-v1")
+  const mainKeys = ssbKeys.generate()
+
+  const content = {
+    type: "metafeed/add",
+    feedpurpose: "main",
+    subfeed: mainKeys.id,
+    tangles: {
+      metafeed: {
+        root: null,
+        previous: null
+      }
+    }
+  }
+
+  db.publishAs(mfKeys, mainKeys, content, (err, msg) => {
+    t.error(err, 'no err')
+
+    db.get(msg.key, (err, msg) => {
+      t.equal(msg.content.type, 'metafeed/add')
+      sbot.close(t.end)
     })
   })
 })
