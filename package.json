@@ -38,7 +38,7 @@
     "push-stream": "^11.0.0",
     "rimraf": "^3.0.2",
     "ssb-bendy-butt": "^0.5.0",
-    "ssb-bfe": "^0.1.0",
+    "ssb-bfe": "^0.2.0",
     "ssb-box2": "https://github.com/arj03/ssb-box2",
     "ssb-keys": "^8.1.0",
     "ssb-ref": "^2.14.3",

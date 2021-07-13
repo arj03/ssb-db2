@@ -148,8 +148,15 @@ module.exports = function (dir, config, keystore) {
 
   function decryptBox2(ciphertext, author, previous) {
     const envelope = Buffer.from(ciphertext.replace('.box2', ''), 'base64')
-    const authorBFE = bfe.encode(author)
-    const previousBFE = bfe.encode(previous)
+    let authorBFE, previousBFE
+    if (author.endsWith('.bbfeed-v1')) {
+      authorBFE = bfe.encodeBendyButt(author)
+      previousBFE = bfe.encodeBendyButt(previous)
+    } else if (author.endsWith('.ed25519')) {
+      authorBFE = bfe.encodeClassic(author)
+      previousBFE = bfe.encodeClassic(previous)
+    } else
+      console.error("Unknown feed format for box2 unbox message", author)
 
     const trial_dm_keys = author !== sbotId ?
           [keystore.sharedDMKey(author), ...keystore.ownDMKeys()] :
