@@ -117,12 +117,18 @@ module.exports = class Plugin {
   // doesn't support it, but `level-post` is a dependency in `pull-level`.
   // Note, this._keyEncoding and this._valueEncoding are strings.
   get keyEncoding() {
-    if (encodings[this._keyEncoding]) return encodings[this._keyEncoding]
+    const e = this._keyEncoding
+    if (typeof e === 'object' && e) return e
+    else if (typeof e === 'string' && encodings[e]) return encodings[e]
+    // if (encodings[this._keyEncoding]) return encodings[this._keyEncoding]
     else return undefined
   }
 
   get valueEncoding() {
-    if (encodings[this._valueEncoding]) return encodings[this._valueEncoding]
+    const e = this._valueEncoding
+    if (typeof e === 'object' && e) return e
+    else if (typeof e === 'string' && encodings[e]) return encodings[e]
+    // if (encodings[this._valueEncoding]) return encodings[this._valueEncoding]
     else return undefined
   }
 

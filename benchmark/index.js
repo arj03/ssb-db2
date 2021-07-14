@@ -357,6 +357,33 @@ test('initial indexing', async (t) => {
 
   await ended.promise
 })
+test('initial indexing leveldb about-self', async (t) => {
+  await sleep(500) // some silence to make it easier to read the CPU profiler
+  const ended = DeferredPromise()
+
+  const sbot = SecretStack({ appKey: caps.shs })
+    .use(require('../'))
+    .use(require('../about-self'))
+    .call(null, { keys, path: dir })
+
+  const start = Date.now()
+
+  sbot.db.onDrain('base', () => {
+    sbot.db.onDrain('aboutSelf', () => {
+      const duration = Date.now() - start
+      t.pass(`duration: ${duration}ms`)
+      fs.appendFileSync(
+        reportPath,
+        `| Initial indexing leveldb about-self | ${duration}ms |\n`
+      )
+      updateMaxRAM()
+      global.gc()
+      sbot.close(() => ended.resolve())
+    })
+  })
+
+  await ended.promise
+})
 
 test('initial indexing maxcpu 86', async (t) => {
   rimraf.sync(indexesPath)

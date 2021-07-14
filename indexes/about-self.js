@@ -1,6 +1,7 @@
 const bipf = require('bipf')
 const pull = require('pull-stream')
 const pl = require('pull-level')
+const fastJson = require('fast-json-stringify')
 const Plugin = require('./plugin')
 
 const bValue = Buffer.from('value')
@@ -9,9 +10,33 @@ const bContent = Buffer.from('content')
 const bType = Buffer.from('type')
 const bAbout = Buffer.from('about')
 
+const stringify = fastJson({
+  title: 'AboutSelf Value',
+  type: 'object',
+  properties: {
+    name: {
+      type: 'string',
+    },
+    image: {
+      type: 'string',
+    },
+    description: {
+      type: 'string',
+    },
+  },
+})
+
+const valueEncoding = {
+  encode: stringify,
+  decode: JSON.parse,
+  buffer: false,
+  type: 'json',
+}
+
 // feedId => hydratedAboutObj
 module.exports = class AboutSelf extends Plugin {
   constructor(log, dir) {
+    // super(log, dir, 'aboutSelf', 3, undefined, valueEncoding)
     super(log, dir, 'aboutSelf', 3, 'json', 'json')
     this.profiles = {}
   }
@@ -57,7 +82,11 @@ module.exports = class AboutSelf extends Plugin {
   }
 
   updateProfileData(author, content) {
-    let profile = this.profiles[author] || {}
+    let profile = this.profiles[author] || {
+      name: '',
+      description: '',
+      image: '',
+    }
 
     if (content.name) profile.name = content.name
 
