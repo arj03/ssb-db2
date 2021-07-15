@@ -364,6 +364,12 @@ Convenience method for validating and adding a message to the database
 written by the feed running the secret-stack. If message contains
 recps, the message will automatically be encrypted.
 
+### publishAs(feedKey, msg, cb)
+
+Convenience method for validating and adding a message to the database
+written by a different feed than running the secret-stack. If message
+contains recps, the message will automatically be encrypted.
+
 ### add(msg, cb)
 
 Validate and add a message value (without id and timestamp) to the

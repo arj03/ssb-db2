@@ -4,10 +4,11 @@ const validate = require('ssb-validate')
 const Obv = require('obz')
 const promisify = require('promisify-4loc')
 const jitdbOperators = require('jitdb/operators')
-const operators = require('./operators')
+const bendyButt = require('ssb-bendy-butt')
 const JITDb = require('jitdb')
 const Debug = require('debug')
 
+const operators = require('./operators')
 const { indexesPath } = require('./defaults')
 const { onceWhen } = require('./utils')
 const Log = require('./log')
@@ -34,6 +35,7 @@ exports.manifest = {
   get: 'async',
   add: 'async',
   publish: 'async',
+  publishAs: 'async',
   del: 'async',
   deleteFeed: 'async',
   addOOO: 'async',
@@ -239,6 +241,57 @@ exports.init = function (sbot, config) {
     )
   }
 
+  function publishAs(keys, x, cb) {
+    const guard = guardAgainstDuplicateLogs('publishAs()')
+    if (guard) return cb(guard)
+
+    // Classic SSB Feed
+    if (keys.id.endsWith('.ed25519')) {
+      // FIXME: this endsWith check should be a ssb-ref concern
+      const content = x
+      onceWhen(
+        stateFeedsReady,
+        (ready) => ready === true,
+        () => {
+          if (content.recps) content = ssbKeys.box(content, content.recps)
+
+          state.queue = []
+          state = validate.appendNew(state, null, keys, content, Date.now())
+
+          const kv = state.queue[state.queue.length - 1]
+          log.add(kv.key, kv.value, (err, data) => {
+            post.set(data)
+            cb(err, data)
+          })
+        }
+      )
+    }
+    // Bendy butt
+    else if (keys.id.endsWith('.bbfeed-v1')) {
+      const msgVal = x
+      // FIXME: validate
+      // FIXME: encryption
+      onceWhen(
+        stateFeedsReady,
+        (ready) => ready === true,
+        () => {
+          const msgKey = bendyButt.hash(msgVal)
+          state.feeds[keys.id] = {
+            id: msgKey,
+            timestamp: msgVal.timestamp,
+            sequence: msgVal.sequence,
+            queue: [],
+          }
+
+          log.add(msgKey, msgVal, (err, data) => {
+            post.set(data)
+            cb(err, data)
+          })
+        }
+      )
+    } else throw ('Unknown feed format', keys)
+  }
+
   function del(msgId, cb) {
     const guard = guardAgainstDuplicateLogs('del()')
     if (guard) return cb(guard)
@@ -418,6 +471,7 @@ exports.init = function (sbot, config) {
     deleteFeed,
     add,
     publish,
+    publishAs,
     addOOO,
     addOOOStrictOrder,
     getStatus: () => status.obv,
