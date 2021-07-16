@@ -242,7 +242,11 @@ exports.init = function (sbot, config) {
 
     const plaintext = Buffer.from(JSON.stringify(content), 'utf8')
     const msgKey = new SecretKey().toBuffer()
-    const previousMessageId = bfe.encodeClassic(previous)
+    let previousMessageId = bfe.encode(previous)
+
+    // FIXME: fix in envelope-js
+    if (previous === null)
+      previousMessageId = Buffer.concat([Buffer.from([1, 0]), Buffer.alloc(32)])
 
     const envelope = box(
       plaintext,
@@ -284,6 +288,10 @@ exports.init = function (sbot, config) {
     const msgKey = new SecretKey().toBuffer()
 
     // FIXME: consider error if no recipientKeys
+
+    // FIXME: fix in envelope-js
+    if (encodedPrevious.equals(Buffer.from([6, 2])))
+      encodedPrevious = Buffer.concat([Buffer.from([1, 4]), Buffer.alloc(32)])
 
     const envelope = box(
       encodedContent,
@@ -352,12 +360,12 @@ exports.init = function (sbot, config) {
       const feedState = state.feeds[feedKeys.id]
       const previous = feedState ? feedState.id : null
       const sequence = feedState ? feedState.sequence : 1
-      const msg = bendy.create(
+      const msg = bendy.encodeNew(
         content,
-        feedKeys,
         subfeedKeys,
+        feedKeys,
+        sequence + 1,
         previous,
-        sequence,
         Date.now(),
         encryptBendyButt
       )
@@ -371,7 +379,7 @@ exports.init = function (sbot, config) {
         sequence: sequence + 1,
       }
 
-      log.add(key, msg, (err, data) => {
+      log.add(key, bendy.decode(msg), (err, data) => {
         post.set(data)
         cb(err, data)
       })

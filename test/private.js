@@ -84,6 +84,7 @@ test('publishAs bendy butt', (t) => {
     type: "metafeed/add",
     feedpurpose: "secret purpose",
     subfeed: mainKeys.id,
+    metafeed: mfKeys.id,
     recps: [keys.id],
     tangles: {
       metafeed: {
@@ -114,13 +115,15 @@ test('box2', (t) => {
   rimraf.sync(dirBox2)
   mkdirp.sync(dirBox2)
 
-  const sbotBox2 = SecretStack({ appKey: caps.shs }).use(require('../')).call(null, {
-    keys,
-    path: dirBox2,
-    db2: {
-      alwaysbox2: true
-    }
-  })
+  const sbotBox2 = SecretStack({ appKey: caps.shs })
+    .use(require('../'))
+    .call(null, {
+      keys,
+      path: dirBox2,
+      db2: {
+        alwaysbox2: true
+      }
+    })
 
   sbotBox2.db.addBox2DMKey(testkey)
 
@@ -142,13 +145,15 @@ test('box2', (t) => {
 
       const keys2 = ssbKeys.loadOrCreateSync(path.join(dirKeys2, 'secret'))
 
-      const sbotKeys2 = SecretStack({ appKey: caps.shs }).use(require('../')).call(null, {
-        keys: keys2,
-        path: dirKeys2,
-        db2: {
-          alwaysbox2: true
-        }
-      })
+      const sbotKeys2 = SecretStack({ appKey: caps.shs })
+        .use(require('../'))
+        .call(null, {
+          keys: keys2,
+          path: dirKeys2,
+          db2: {
+            alwaysbox2: true
+          }
+        })
 
       let contentKeys2 = { type: 'post', text: 'keys2 secret', recps: [keys2.id] }
 

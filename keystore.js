@@ -37,7 +37,7 @@ module.exports = function (config) {
 
   return {
     ownDMKeys,
-    TFKId: bfe.encodeClassic(config.keys.id),
+    TFKId: bfe.encode(config.keys.id),
     sharedDMKey,
     supportsBox2,
     addBox2DMKey,

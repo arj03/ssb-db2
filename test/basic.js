@@ -270,6 +270,7 @@ test('publishAs bendy butt', (t) => {
     type: "metafeed/add",
     feedpurpose: "main",
     subfeed: mainKeys.id,
+    metafeed: mfKeys.id,
     tangles: {
       metafeed: {
         root: null,
